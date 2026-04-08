@@ -242,6 +242,44 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(200,{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"});
     res.end(JSON.stringify(Object.values(tasks))); return;
   }
+  // AI proxy endpoint — forwards to Anthropic API bypassing CORS
+  if (url.pathname==="/ai" && req.method==="POST") {
+    res.setHeader("Access-Control-Allow-Origin","*");
+    res.setHeader("Access-Control-Allow-Headers","Content-Type");
+    let body="";
+    req.on("data",c=>body+=c);
+    req.on("end",async()=>{
+      try {
+        const parsed = JSON.parse(body);
+        const data = JSON.stringify(parsed);
+        const aiReq = https.request({
+          hostname:"api.anthropic.com",
+          path:"/v1/messages",
+          method:"POST",
+          headers:{
+            "Content-Type":"application/json",
+            "x-api-key": process.env.ANTHROPIC_API_KEY || "",
+            "anthropic-version":"2023-06-01",
+            "Content-Length": Buffer.byteLength(data)
+          }
+        }, aiRes => {
+          let raw="";
+          aiRes.on("data",c=>raw+=c);
+          aiRes.on("end",()=>{
+            res.writeHead(aiRes.statusCode,{"Content-Type":"application/json","Access-Control-Allow-Origin":"*"});
+            res.end(raw);
+          });
+        });
+        aiReq.on("error",e=>{ res.writeHead(500); res.end(JSON.stringify({error:e.message})); });
+        aiReq.write(data); aiReq.end();
+      } catch(e){ res.writeHead(400); res.end(JSON.stringify({error:"Bad request"})); }
+    }); return;
+  }
+  // CORS preflight
+  if (req.method==="OPTIONS") {
+    res.writeHead(200,{"Access-Control-Allow-Origin":"*","Access-Control-Allow-Methods":"POST,GET","Access-Control-Allow-Headers":"Content-Type"});
+    res.end(); return;
+  }
   res.writeHead(404); res.end("Not found");
 });
 
